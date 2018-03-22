@@ -1,0 +1,366 @@
+---
+title: "Exploring Kmart Closures"
+author: "David Ingold"
+date: "3/21/2018"
+output:
+  html_document:
+    toc: yes
+    toc_float:
+      smooth_scroll: yes
+      collapsed: no
+  pdf_document: default
+  
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+The following project compares the local household income of areas where Kmart stores are closing to areas where stores are staying open. It uses R to scrape the location of Kmart stores from Kmart.com, and fetches zip code-level incomes data from the American Community Survey using their R API.
+
+
+
+
+## Setting up the project
+
+I start by loading the required packages. You may need to install some of the packages if you haven't used them before using ```install.packges()```.
+
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+
+pkgs <- c('acs','data.table','dplyr', 'DT', 'ggplot2', 'magrittr', 'readr', 'rvest', 'scales', 'tibble')
+
+check <- sapply(pkgs, require, warn.conflicts = TRUE, character.only = TRUE)
+if(any(!check)){
+    pkgs.missing <- pkgs[!check]
+    install.packages(pkgs.missing, repos = "http://cran.us.r-project.org")
+    check <- sapply(pkgs.missing, require, warn.conflicts = TRUE, character.only = TRUE)
+}  
+```
+
+## Scraping store addresses
+
+I'd like to find all the Kmart stores in America. I could start by visiting [www.kmart.com/stores.html](http://www.kmart.com/stores.html), clicking on each [state page](http://www.kmart.com/stores/california.html) and copying and pasting each address into excel. But that takes forever. I'd rather use R.
+
+The first step is to find all the live links on [www.kmart.com/stores.html](http://www.kmart.com/stores.html). I use ```read_html()``` with the address I want to scrape and pipe that into ```html_nodes()``` to target 'a' tags and ```html_attr()``` to scrape each 'href' on the page. In HTML, an \<a\> tag designates the presence of a hyperlink, and 'href' specifies the hyperlink's destination.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+
+all_links <- read_html("http://www.kmart.com/stores.html") %>%
+  html_nodes('a') %>%
+  html_attr('href')
+
+all_links
+```
+
+There are over 150 links on the page, but we only want the links that send you to a state's page. Rows 33 through 84 look like the type of url extension I need, so I'm going to create a new vector with only those rows.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+
+store_links <- all_links[33:84]
+
+store_links
+```
+
+These url extensions need to be appended to the end of "http://www.kmart.com", to make addresses like [http://www.kmart.com/stores/california.html](http://www.kmart.com/stores/california.html), so I create a function that uses ```paste0()``` to concatonate a new url. After running that function, I should get a clean list of full urls that I can go out and scrape.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+
+make_store_urls <- function(links) {
+  full_url <- paste0("http://www.kmart.com",links)
+  return(full_url)
+}
+
+clean_urls <- make_store_urls(store_links)
+
+clean_urls
+```
+
+On each state page, for ex. [http://www.kmart.com/stores/california.html](http://www.kmart.com/stores/california.html), there's a repetitive pattern to how each store's information is formatted. I need a function that will visit each of these urls, pull out specific pieces of content for each store, and save that information into a new row. 
+
+I use the inspect element tool in my web browser to see what part of the page I need to target. In this case, it's the HTML nodes named, "streetAddress", "addressLocality", "addressRegion", "postalCode" and "telephone." I write a function to visit each url and copy these portions of a page into a new row.
+
+The function visits each url in the clean_urls vector, scrapes the store data, then combines all the rows into one data frame using using ```rbindlist()```. You can see the output data below, named ```all_store_addresses```.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+
+get_addresses <- function(url_to_scrape) {
+  address <- url_to_scrape %>%
+    read_html() %>%
+    html_nodes(xpath = '//*[@itemprop="streetAddress"]') %>%
+    html_text(trim = TRUE)
+ 
+  city <- url_to_scrape %>%
+    read_html() %>%
+    html_nodes(xpath = '//*[@itemprop="addressLocality"]') %>%
+    html_text(trim = TRUE)
+  
+  state <- url_to_scrape %>%
+    read_html() %>%
+    html_nodes(xpath = '//*[@itemprop="addressRegion"]') %>%
+    html_text(trim = TRUE)
+ 
+  zip <- url_to_scrape %>%
+    read_html() %>%
+    html_nodes(xpath = '//*[@itemprop="postalCode"]') %>%
+    html_text(trim = TRUE)
+  
+   phone <- url_to_scrape %>%
+    read_html() %>%
+    html_nodes(xpath = '//*[@itemprop="telephone"]') %>%
+    html_text(trim = TRUE)
+
+  store_data <- data.frame(address, city, state, zip, phone)
+  return(store_data)
+}
+
+all_store_addresses <- rbindlist(lapply(clean_urls, get_addresses))
+
+datatable(all_store_addresses, extensions = 'Buttons', options = list(
+  dom = 'Bfrtip', buttons = c('copy', 'csv', 'excel', 'pdf', 'print')
+  )
+)
+```
+  
+    
+## Closed Kmart stores
+
+Separately, I have a list of Kmart stores I know are closing. The data was available at the [Sears corporate website](http://searsholdings.com/docs/010418-store-closing-list.pdf). I've pulled the data into a csv and uploaded the file to Github to more easily read the file into R. Below, the data is loaded with ```read_csv()```. 
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+
+closing_stores <- read_csv(file = "https://raw.githubusercontent.com/davidingold/sears-kmart-closing-spring-2018/master/010418-store-closing-list.csv")
+
+datatable(closing_stores, extensions = 'Buttons', options = list(
+  dom = 'Bfrtip', buttons = c('copy', 'csv', 'excel', 'pdf', 'print')
+  )
+)
+```
+
+  
+  
+I add a new column to the data called "closing", and also write the string "closing" to each row in the new column. Using ```select```, I grab two columns from the data frame, ZIP codes and closing, and create a new data frame called ```closing_stores_clean```.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+
+closing_stores$closing <- "closing"
+closing_stores_clean <- closing_stores %>% select(ZIP, closing)
+
+closing_stores_clean
+```
+
+Next, I use ```merge()``` to combine the data frame of scraped Kmart stores (```all_store_addresses```), with the  data frame of closing stores (```closing_stores_clean```). I'll use the ZIP codes column present on each to merge the data sets, but note that because the column names are not identical, ```zip``` and ```ZIP```, I need to explicitly write the name of each column I want to merge.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+
+all_stores_and_closing <- merge(x = all_store_addresses,
+                        y = closing_stores_clean,
+                        by.x = "zip",
+                        by.y = "ZIP",
+                        all = TRUE)
+
+all_stores_and_closing
+```
+
+The two data sets are now merged, but many rows in the "closing" column say ```NA```. This is because their closing status was not part of the original data we scraped. So we'll use ```is.na()``` to find all the rows that are blank, i.e. do not say "closing", and replace ```NA``` with "not closing".
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+
+all_stores_and_closing$closing[is.na(all_stores_and_closing$closing)] <- "not closing"
+
+datatable(all_stores_and_closing, extensions = 'Buttons', options = list(
+  dom = 'Bfrtip', buttons = c('copy', 'csv', 'excel', 'pdf', 'print')
+  )
+)
+```
+
+## Calling in U.S. Census data
+
+Next, I'd like to understand more about the ZIP codes where Kmarts are closing. ZIP code level demographic data is available from the American Community Survey. Specifically, I'm going to look at household income. The data is available from [ACS table B19013](https://www.socialexplorer.com/data/ACS2015/metadata/?ds=ACS15&table=B19013).
+
+The first step is installing an API key. You can generate a key from [https://api.census.gov/data/key_signup.html](https://api.census.gov/data/key_signup.html). Install the key using ```ap.key.install()```. I usually like to include a backup key in the comments in case the API request limit is hit using the primary key.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+
+api.key.install("fd68cfbf9e76890c847a2550d660865147db3685")
+# Backup key: fdf8d8199abdff788753f0b3faf8a92b50751fbe
+```
+
+I use the ```acs.fetch()``` function to get ACS data. Specifically, I'm asking for: 2016 data, 5-year estimates, all ZIP codes, table B19013, within the American Community Survey, with original column names. You can see the arguements used below:
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+
+raw_acs_data <- acs.fetch(endyear = 2016,
+          span = 5,
+          geo.make(zip.code = "*"),
+          table.number = "B19013",
+          dataset = "acs",
+          col.names = "auto")
+```
+
+The data is returned as "raw_acs_data". I need to specifically pull out the income and zip code data from the data frame created by ```acs_fetch()```.
+
+But, the ACS package has given us a data frame where instead of a column of income data and a column of ZIP codes, we have a column of income data and each row has a unique name, which happens to be the correspoding ZIP code. We can't use the ZIP code data unless it lives in its own column. You can turn row names into their own column, which I'm calling ```zip```, using ```rownames_to_column()```.
+
+The new ```zip``` column is messy though. For example, a row might say "ZCTA5 10022" instead of "10022", because ZCTA5 is the prefix the American Community Survey uses for ZIP code tabulation areas. So, we use ```str_replace()``` to remove "ZCTA5 " from each row and replace it with nothing — ```replacement = ""``` — leaving behind clean ZIP codes.
+
+Finally, we use ```rename()``` to change the name of the income column from ```B19013_001``` to ```income``` so it'll be easier to reference later. We chain all these steps into one long task using the pipe and call this data frame ```zips_income```. 
+
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+
+zips_income <- data.frame(raw_acs_data@estimate) %>%
+  rownames_to_column("zip") %>%
+  mutate(zip = str_replace(string = zip,
+                           pattern = "ZCTA5 ",
+                           replacement = "")) %>%
+  dplyr::rename(income = B19013_001)
+
+head(zips_income)
+```
+
+
+## Merging the data
+
+The Kmart stores data  frame — ```all_stores_and_closing``` — needs to be merged with the American Community Survey income data frame —```zips_income```. Both data frames have a column containing ZIP codes, so I'll use ```merge()``` to combine the two data frames using the column named ```zip```. I also want to keep all the rows from ```all_stores_closing```, even if there isn't a matching row of income data, so I set ```all.x = TRUE```. The merged data is called ```stores_with_income```.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+
+stores_with_income <- merge(x = all_stores_and_closing,
+                            y = zips_income,
+                            by = "zip",
+                            all.x = TRUE)
+head(stores_with_income)
+```
+
+The data needs to be cleaned up a little. There are some locations that lack income data, i.e. are ```NA```, and others show negative income. I use ```filter()``` to take only the rows where income is not ```NA``` and income is greater or equal to 0. I'll end up with a clean data frame called ```stores_with_income_clean```, which we can use for charting purposes.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+
+stores_with_income_clean <- stores_with_income %>%
+  na.omit() %>%
+  filter(income >= 0)
+
+datatable(stores_with_income_clean, extensions = 'Buttons', options = list(
+  dom = 'Bfrtip', buttons = c('copy', 'csv', 'excel', 'pdf', 'print')
+  )
+)
+```
+
+## Charting my findings
+
+I'm now ready to chart my findings with ```ggplot()``` to look for patterns in the data.
+
+
+### Box and whisker
+
+First, a box and whisker plot using ```geom_boxplot()```. Right away, I can see that all but two of the closed Kmarts are in neighborhoods where average household income is below $100,000.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+
+ggplot(data = stores_with_income_clean, aes(x = closing, y = income), alpha = 0.5) +
+  geom_boxplot() + geom_jitter(width = 0.1) +
+  scale_y_continuous(labels = comma) +
+  labs(title = "Household income near Kmart stores", x = "Store status", y = "Household income")
+```
+
+### Violin plot
+
+Next, a violin plot using ```geom_violin()```. The data shows that the bulk of neighborhoods near closing Kmarts have an average household income around \$40,000. Average income is closer to \$50,000 in ZIP codes where Kmarts will remain open.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+
+ggplot(data = stores_with_income_clean, aes(x = closing, y = income), alpha = 0.5) +
+  geom_violin() + geom_jitter(width = 0.1) +
+  scale_y_continuous(labels = comma, breaks = seq(0, 140000, 10000)) +
+  labs(title = "Household income near Kmart stores", x = "Store status", y = "Household income")
+```
+
+### Histogram
+
+Overlaying two histograms starts to show the skew of income between the two data sets.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+
+ggplot() + 
+  geom_histogram(data = stores_with_income_clean %>% filter(closing == "not closing"),
+                 aes(x = income, fill = "Not closing"), binwidth = 1000) +
+  geom_histogram(data = stores_with_income_clean %>% filter(closing == "closing"),
+                 aes(x = income, fill = "Closing"), binwidth = 1000) +
+  scale_x_continuous(labels = comma) +
+  labs(title = "Household income near Kmart stores",
+       x = "Household income", y = "Number of stores", fill = "Store status")
+```
+
+And doing a ```facet_wrap()``` by state now allows us to find more localized stories.
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+
+ggplot() + 
+  geom_histogram(data = stores_with_income_clean %>% filter(closing == "not closing"),
+                 aes(x = income, fill = "Not closing"), binwidth = 5000) +
+  geom_histogram(data = stores_with_income_clean %>% filter(closing == "closing"),
+                 aes(x = income, fill = "Closing"), binwidth = 5000) +
+  scale_x_continuous(labels = comma) +
+  labs(title = "Household income near Kmart stores",
+       x = "Household income", y = "Number of stores", fill = "Store status") +
+  facet_wrap(~state)
+
+```
+
+We can specifically explore any state using ```filter()``` on the data within our ```ggplot()``` function.
+
+#### New York
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+
+ggplot() + 
+  geom_histogram(data = stores_with_income_clean %>%
+                   filter(closing == "not closing" & state == "New York"),
+                 aes(x = income, fill = "Not closing"), binwidth = 5000) +
+  geom_histogram(data = stores_with_income_clean %>%
+                   filter(closing == "closing" & state == "New York"),
+                 aes(x = income, fill = "Closing"), binwidth = 5000) +
+  labs(title = "Household income near New York Kmart stores",
+       x = "Household income", y = "Number of stores", fill = "Store status")
+```
+
+#### Colorado
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+
+ggplot() + 
+  geom_histogram(data = stores_with_income_clean %>% 
+                   filter(closing == "not closing" & state == "Colorado"),
+                 aes(x = income, fill = "Not closing"), binwidth = 5000) + 
+  geom_histogram(data = stores_with_income_clean %>%
+                   filter(closing == "closing" & state == "Colorado"),
+                 aes(x = income, fill = "Closing"), binwidth = 5000) +
+  labs(title = "Household income near Colorado Kmart stores",
+       x = "Household income", y = "Number of stores", fill = "Store status")
+```
+
+#### Georgia
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+
+ggplot() + 
+  geom_histogram(data = stores_with_income_clean %>%
+                   filter(closing == "not closing" & state == "Georgia"),
+                 aes(x = income, fill = "Not closing"), binwidth = 5000) +
+  geom_histogram(data = stores_with_income_clean %>%
+                   filter(closing == "closing" & state == "Georgia"),
+                 aes(x = income, fill = "Closing"), binwidth = 5000) +
+  labs(title = "Household income near Georgia Kmart stores",
+       x = "Household income", y = "Number of stores", fill = "Store status")
+```
+
+#### West Virginia
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+
+ggplot() + 
+  geom_histogram(data = stores_with_income_clean %>%
+                   filter(closing == "not closing" & state == "West Virginia"),
+                 aes(x = income, fill = "Not closing"), binwidth = 5000) +
+  geom_histogram(data = stores_with_income_clean %>%
+                   filter(closing == "closing" & state == "West Virginia"),
+                 aes(x = income, fill = "Closing"), binwidth = 5000) +
+  labs(title = "Household income near West Virginia Kmart stores",
+       x = "Household income", y = "Number of stores", fill = "Store status")
+```
+
