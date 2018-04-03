@@ -23,7 +23,7 @@ The following project compares the local household income of areas where Kmart s
 
 ## Setting up the project
 
-I start by loading the required packages. You may need to install some of the packages if you haven't used them before using ```install.packges()```.
+I start by loading the required packages. You may need to install some of the packages if you haven't used them before using ```install.packges()```
 
 ```{r message=FALSE, warning=FALSE, paged.print=FALSE}
 
@@ -56,7 +56,7 @@ There are over 150 links on the page, but we only want the links that send you t
 
 ```{r echo=TRUE, message=FALSE, warning=FALSE}
 
-store_links <- all_links[33:84]
+store_links <- all_links[32:83]
 
 store_links
 ```
@@ -128,7 +128,8 @@ Separately, I have a list of Kmart stores I know are closing. The data was avail
 
 ```{r echo=TRUE, message=FALSE, warning=FALSE}
 
-closing_stores <- read_csv(file = "https://raw.githubusercontent.com/davidingold/sears-kmart-closing-spring-2018/master/010418-store-closing-list.csv")
+closing_stores <- read_csv(file = "https://raw.githubusercontent.com/davidingold/R_training/master/Kmart_closures/Data/010418-store-closing-list.csv")
+
 
 datatable(closing_stores, extensions = 'Buttons', options = list(
   dom = 'Bfrtip', buttons = c('copy', 'csv', 'excel', 'pdf', 'print')
